@@ -6,8 +6,14 @@ export default {
     // KODE RAHASIA LU
     // =========================================================
     const URL_ADMIN = "/admin"; 
-    const KUNCI_API = "Ipulapik999#"; 
+    const KUNCI_API = "Ipulapik"; 
     // =========================================================
+
+    const headerAntiCache = {
+        'Content-Type': 'application/json', 
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+        'Access-Control-Allow-Origin': '*'
+    };
 
     // 1. MUNCULKAN HALAMAN ADMIN
     if (request.method === "GET" && url.pathname === URL_ADMIN) {
@@ -77,36 +83,27 @@ export default {
           </div>
           
           <script>
-              // Fungsi buat narik 4 Huruf Aman dari Worker
               async function generateAntiTypo() {
                   const key = document.getElementById("key").value.trim();
                   const btnGen = document.getElementById("btnGen");
-                  
                   if(!key) return alert("Isi Kunci API Administrator dulu!");
                   
                   btnGen.innerText = "..."; btnGen.disabled = true;
-                  
                   try {
                       const req = await fetch('/api/generate-safe-key', { 
                           method: 'POST', 
                           headers: {'Content-Type': 'application/json'}, 
                           body: JSON.stringify({adminKey: key}) 
                       });
-                      
                       if(req.ok) { 
                           const data = await req.json();
                           document.getElementById("pass").value = data.code;
-                      } else if(req.status === 401) {
-                          alert("Akses Ditolak: Kunci API Salah!");
-                      } else {
-                          alert("Gagal generate kode!");
-                      }
+                      } else if(req.status === 401) { alert("Akses Ditolak: Kunci API Salah!");
+                      } else { alert("Gagal generate kode!"); }
                   } catch(e) { alert("Error Jaringan!"); }
-                  
                   btnGen.innerText = "Auto Buat"; btnGen.disabled = false;
               }
 
-              // Fungsi simpan biasa
               async function save() {
                   const key = document.getElementById("key").value.trim();
                   const url = document.getElementById("url").value.trim();
@@ -118,24 +115,20 @@ export default {
                   if(pass.length !== 4) return alert("Kata kunci harus persis 4 huruf!");
                   
                   btn.innerText = "Memproses..."; btn.disabled = true; resBox.style.display = "none";
-                  
                   try {
                       const req = await fetch('/api/create', { 
                           method: 'POST', 
                           headers: {'Content-Type': 'application/json'}, 
                           body: JSON.stringify({adminKey: key, url: url, password: pass}) 
                       });
-                      
                       if(req.ok) { 
                           document.getElementById("resPass").innerText = pass;
                           resBox.style.display = "block";
                           document.getElementById("url").value = ""; 
                           document.getElementById("pass").value = ""; 
-                      }
-                      else if(req.status === 401) alert("Akses Ditolak: Kunci API Salah!");
+                      } else if(req.status === 401) alert("Akses Ditolak: Kunci API Salah!");
                       else alert("Terjadi kesalahan sistem saat menyimpan data!");
                   } catch(e) { alert("Error Jaringan!"); }
-                  
                   btn.innerText = "Simpan ke Database"; btn.disabled = false;
               }
           </script>
@@ -144,99 +137,84 @@ export default {
       return new Response(adminHTML, { headers: { "Content-Type": "text/html" } });
     }
 
-    // 2. API BUAT KATA KUNCI AMAN (ANTI-TYPO)
+    // 2. API AMBIL STATISTIK TOTAL VIEWS
+    if (request.method === "GET" && url.pathname === "/api/stats") {
+        let totalViews = await env.LINK_DB.get("_STATS_TOTAL_VIEWS") || "0";
+        return new Response(JSON.stringify({ total: parseInt(totalViews) }), { headers: headerAntiCache });
+    }
+
+    // 3. API BUAT KATA KUNCI AMAN (ANTI-TYPO)
     if (request.method === "POST" && url.pathname === "/api/generate-safe-key") {
         try {
             const body = await request.json();
             if (body.adminKey !== KUNCI_API) return new Response("Akses Ditolak", { status: 401 });
 
-            // Tarik semua kata kunci yang udah ada di database (max 1000)
             const keysData = await env.LINK_DB.list();
-            const existingKeys = keysData.keys.map(k => k.name);
+            const existingKeys = keysData.keys.map(k => k.name).filter(k => k.length === 4);
 
-            // Huruf yg dipakai (Dihapus: O, I, Q, L supaya ga ambigu di mata)
             const chars = "ABCDEFGHJKMNPRSTUVWXYZ"; 
-            let newCode = "";
-            let attempt = 0;
+            let newCode = ""; let attempt = 0;
 
-            // Looping cari kata kunci yang bedanya minimal 2 huruf dari semua kode yang ada
             while (attempt < 200) {
                 newCode = "";
-                for (let i = 0; i < 4; i++) {
-                    newCode += chars.charAt(Math.floor(Math.random() * chars.length));
-                }
-
+                for (let i = 0; i < 4; i++) newCode += chars.charAt(Math.floor(Math.random() * chars.length));
                 let isSafe = true;
                 for (let oldCode of existingKeys) {
-                    if (oldCode.length !== 4) continue;
-                    
                     let differences = 0;
-                    for (let i = 0; i < 4; i++) {
-                        if (newCode[i] !== oldCode[i]) differences++;
-                    }
-                    
-                    // Kalau cuma beda 1 huruf (rawan typo), batalkan dan buat ulang!
-                    if (differences < 2) {
-                        isSafe = false;
-                        break; 
-                    }
+                    for (let i = 0; i < 4; i++) { if (newCode[i] !== oldCode[i]) differences++; }
+                    if (differences < 2) { isSafe = false; break; }
                 }
-
-                if (isSafe) break; // Ketemu yang bener-bener aman!
+                if (isSafe) break;
                 attempt++;
             }
-
             return new Response(JSON.stringify({ code: newCode }), { headers: { 'Content-Type': 'application/json' } });
-
         } catch (e) { return new Response("Error", { status: 500 }); }
     }
 
-    // 3. API SIMPAN KATA KUNCI BARU (KATA KUNCI JADI KEY DI KV)
+    // 4. API SIMPAN KATA KUNCI BARU
     if (request.method === "POST" && url.pathname === "/api/create") {
       try {
         const body = await request.json();
         if (body.adminKey !== KUNCI_API) return new Response("Akses Ditolak", { status: 401 });
-
         const { url: targetUrl, password } = body;
         if (!targetUrl || !password || password.length !== 4) return new Response("Data Kurang", { status: 400 });
 
         const dbKey = password.toUpperCase();
-        const dbData = { url: targetUrl }; 
-        await env.LINK_DB.put(dbKey, JSON.stringify(dbData));
-
+        await env.LINK_DB.put(dbKey, JSON.stringify({ url: targetUrl }));
         return new Response(JSON.stringify({ status: "success" }), { headers: { 'Content-Type': 'application/json' } });
-
       } catch (e) { return new Response("Error", { status: 500 }); }
     }
 
-    // 4. API GET / CEK KATA KUNCI DARI USER
-    if (request.method === "GET" && url.pathname.startsWith("/api/get/")) {
-      const parts = url.pathname.split("/");
-      const reqPass = decodeURIComponent(parts[3] || "").toUpperCase(); 
+    // 5. API UNTUK INDEX.HTML (HANYA CEK KATA KUNCI VALID / TIDAK) - TIDAK MENAMBAH VIEW
+    if (request.method === "GET" && url.pathname.startsWith("/api/check/")) {
+      const reqPass = decodeURIComponent(url.pathname.split("/")[3] || "").toUpperCase(); 
+      if (!reqPass || reqPass.length !== 4) return new Response(JSON.stringify({ error: "Tidak valid" }), { status: 400, headers: headerAntiCache });
       
-      const headerAntiCache = {
-        'Content-Type': 'application/json', 
-        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
-        'Access-Control-Allow-Origin': '*'
-      };
-
-      if (!reqPass || reqPass.length !== 4) {
-          return new Response(JSON.stringify({ error: "Kata kunci tidak valid" }), { status: 400, headers: headerAntiCache });
-      }
-
-      // Langsung cari kata kunci di Database
       const rawData = await env.LINK_DB.get(reqPass);
-      if (!rawData) {
-          // Jika tidak ada di database, berarti typo atau kata kunci salah
-          return new Response(JSON.stringify({ error: "Kata kunci tidak ditemukan" }), { status: 404, headers: headerAntiCache });
-      }
+      if (!rawData) return new Response(JSON.stringify({ error: "Tidak ditemukan" }), { status: 404, headers: headerAntiCache });
+      return new Response(JSON.stringify({ status: "ok" }), { headers: headerAntiCache });
+    }
 
-      // Jika ada, kembalikan URL aslinya
+    // 6. API UNTUK VERIFY.HTML (MENDAPATKAN LINK ASLI) - MENAMBAH VIEW
+    if (request.method === "GET" && url.pathname.startsWith("/api/get/")) {
+      const reqPass = decodeURIComponent(url.pathname.split("/")[3] || "").toUpperCase(); 
+      if (!reqPass || reqPass.length !== 4) return new Response(JSON.stringify({ error: "Tidak valid" }), { status: 400, headers: headerAntiCache });
+
+      const rawData = await env.LINK_DB.get(reqPass);
+      if (!rawData) return new Response(JSON.stringify({ error: "Tidak ditemukan" }), { status: 404, headers: headerAntiCache });
+      
       const data = JSON.parse(rawData);
+
+      // --- BAGIAN MENGHITUNG VIEW (JALAN DI BACKGROUND AGAR CEPAT) ---
+      ctx.waitUntil((async () => {
+          let currentViews = await env.LINK_DB.get("_STATS_TOTAL_VIEWS") || "0";
+          await env.LINK_DB.put("_STATS_TOTAL_VIEWS", (parseInt(currentViews) + 1).toString());
+      })());
+
       return new Response(JSON.stringify({ url: data.url }), { headers: headerAntiCache });
     }
 
-    // 5. SELAIN DI ATAS, TAMPILKAN HALAMAN UTAMA (index.html)
+    // 7. SELAIN DI ATAS, TAMPILKAN HALAMAN UTAMA (index.html)
     return env.ASSETS.fetch(request);
   }
 };
